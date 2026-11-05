@@ -5,7 +5,7 @@ DocMeta.setdocmeta!(FixedPointArithmetic, :DocTestSetup, :(using FixedPointArith
 
 makedocs(;
     modules=[FixedPointArithmetic],
-    authors="Jacob Gummesson Atroshi <jacob.gummesson@uni.lu>",
+    authors="Jacob Gummesson Atroshi <jacob.gummessonatroshi@gmail.com>",
     sitename="FixedPointArithmetic.jl",
     format=Documenter.HTML(; prettyurls=get(ENV, "CI", "false") == "true", edit_link="main"),
     pages=["Home" => "index.md", "Arithmetic model" => "arithmetic.md", "API reference" => "api.md"],

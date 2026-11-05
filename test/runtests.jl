@@ -137,6 +137,16 @@ const RNG = Xoshiro(20261101)
         @test rawvalue(abs(typemin(X))) == 127
     end
 
+    @testset "selection" begin
+        X = fixed(6, 3)
+        pairs = vec(collect(Iterators.product(allvalues(X), allvalues(X))))
+        @test isempty(failures(((a, b),) -> min(a, b) === (exact(a) <= exact(b) ? a : b), pairs))
+        @test isempty(failures(((a, b),) -> max(a, b) === (exact(a) >= exact(b) ? a : b), pairs))
+        @test ifelse(true, X(1), X(2)) === X(1)
+        @test ifelse(false, X(1), X(2)) === X(2)
+        @test clamp(X(3), X(-1), X(1)) === X(1)
+    end
+
     @testset "products" begin
         for R in (RoundDown, RoundNearest), O in OVERFLOWS
             X1 = fixed(6, 3; rounding=R, overflow=O)

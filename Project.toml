@@ -1,6 +1,6 @@
 name = "FixedPointArithmetic"
 uuid = "952fc518-24ec-4d86-ac02-78dab145a17f"
-authors = ["Jacob Gummesson Atroshi <jacob.gummesson@uni.lu>"]
+authors = ["Jacob Gummesson Atroshi <jacob.gummessonatroshi@gmail.com>"]
 version = "0.1.0-DEV"
 
 [deps]

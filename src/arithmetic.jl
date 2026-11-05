@@ -66,6 +66,12 @@ Base.:<(x::X, y::X) where {X<:Fx} = x.i < y.i
 Base.:<=(x::X, y::X) where {X<:Fx} = x.i <= y.i
 Base.isless(x::X, y::X) where {X<:Fx} = x.i < y.i
 
+# Selecting on the stored integer: Base's `ifelse` on the struct becomes a `select` of an aggregate, which LLVM does
+# not vectorize, and Base's `min` and `max` go through it.
+Base.ifelse(c::Bool, x::X, y::X) where {X<:Fx} = _fromraw(X, ifelse(c, x.i, y.i))
+Base.min(x::X, y::X) where {X<:Fx} = _fromraw(X, min(x.i, y.i))
+Base.max(x::X, y::X) where {X<:Fx} = _fromraw(X, max(x.i, y.i))
+
 # Products
 
 function Base.:*(x::Fx{W1,F1,R,O,T1}, y::Fx{W2,F2,R,O,T2}) where {W1,F1,W2,F2,R,O,T1,T2}
