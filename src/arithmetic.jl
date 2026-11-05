@@ -6,8 +6,9 @@
 # - Integers act as exact constants and keep the fixed-point format.
 # - Floats do not mix: an operation with a float throws, so that a float constant cannot silently turn a fixed-point
 #   computation into a floating-point one. Convert the constant with `X(c)` first.
-# - Division and transcendental functions are not defined. Base would compute them in floating point; a fixed-point
-#   algorithm has to choose its own method (a reciprocal table, CORDIC, ...), or convert explicitly with `float`.
+# - Division and square roots are correctly rounded in a chosen format (see division.jl). Transcendental functions are
+#   not defined: Base would compute them in floating point, and a fixed-point algorithm has to choose its own method
+#   (a table, CORDIC, ...), or convert explicitly with `float`.
 
 Base.zero(::Type{X}) where {X<:Fx} = _fromraw(X, zero(rawtype(X)))
 Base.zero(x::Fx) = zero(typeof(x))
@@ -162,19 +163,26 @@ end
     )
 end
 
-for f in (
-    :sqrt, :cbrt, :exp, :exp2, :exp10, :expm1, :log, :log2, :log10, :log1p, :sin, :cos, :tan, :sincos, :sinpi,
-    :cospi, :asin, :acos, :atan, :sinh, :cosh, :tanh, :asinh, :acosh, :atanh, :inv,
+const _TRANSCENDENTAL = (
+    :cbrt, :exp, :exp2, :exp10, :expm1, :log, :log2, :log10, :log1p, :sin, :cos, :tan, :sincos, :sinpi, :cospi,
+    :asin, :acos, :atan, :sinh, :cosh, :tanh, :asinh, :acosh, :atanh,
 )
+
+for f in _TRANSCENDENTAL
     @eval Base.$f(x::Fx) = _nomath($(QuoteNode(f)), x)
 end
 
-Base.:/(x::Fx, y::Fx) = _nomath(:/, x)
-Base.:/(x::Fx, y::Integer) = _nomath(:/, x)
-Base.:/(x::Integer, y::Fx) = _nomath(:/, y)
+# Base's complex functions start with `float(z)`, which would succeed and carry on in floating point.
+for f in (_TRANSCENDENTAL..., :sqrt)
+    @eval Base.$f(z::Complex{<:Fx}) = _nomath($(QuoteNode(f)), z)
+end
+
 Base.atan(y::Fx, x::Fx) = _nomath(:atan, y)
 Base.hypot(x::Fx, y::Fx) = _nomath(:hypot, x)
 Base.:^(x::Fx, p::Integer) = _nomath(:^, x)
+Base.:^(z::Complex{<:Fx}, p::Integer) = _nomath(:^, z)
+Base.:^(z::Complex{<:Fx}, p::Bool) = _nomath(:^, z)
+Base.literal_pow(::typeof(^), z::Complex{<:Fx}, ::Val{2}) = z * z
 
 # Scaling by powers of two
 

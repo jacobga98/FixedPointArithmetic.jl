@@ -22,13 +22,15 @@ export Fx,
     wordlength,
     fractionlength,
     roundingmode,
-    overflowmode
+    overflowmode,
+    divide
 
 include("modes.jl")
 include("type.jl")
 include("raw.jl")
 include("conversions.jl")
 include("arithmetic.jl")
+include("division.jl")
 include("show.jl")
 
 end

@@ -4,8 +4,14 @@ Base.show(io::IO, ::OverflowMode{S}) where {S} = print(io, S)
 # the printed type is valid Julia that evaluates to it.
 _roundname(::RoundingMode{S}) where {S} = "Round" * String(S)
 
-function Base.show(io::IO, ::Type{Fx{W,F,R,O,T}}) where {W,F,R,O,T}
-    print(io, "Fx{", W, ", ", F, ", ", _roundname(R), ", ", O, ", ", T, "}")
+function Base.show(io::IO, X::Type{<:Fx})
+    # Types with free parameters, such as those in method signatures, print the Base way.
+    if X isa DataType && roundingmode(X) isa RoundingMode
+        print(io, "Fx{", wordlength(X), ", ", fractionlength(X), ", ", _roundname(roundingmode(X)), ", ")
+        print(io, overflowmode(X), ", ", rawtype(X), "}")
+    else
+        invoke(show, Tuple{IO,Type}, io, X)
+    end
     return nothing
 end
 

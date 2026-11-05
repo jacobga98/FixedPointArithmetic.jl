@@ -54,6 +54,10 @@ const RNG = Xoshiro(20261101)
         for X in (fixed(16, 15), fixed(6, 2; rounding=RoundNearestTiesUp, overflow=SaturateSymmetric))
             @test eval(Meta.parse(string(X))) === X
         end
+        @test repr(Fx) == "Fx"
+        @test repr(Fx{16,15}) == "Fx{16, 15}"
+        @test repr(Vector{<:Fx}) == "Vector{<:Fx}"
+        @test sprint(show, Tuple{Fx{W,F,R,O,T}} where {W,F,R,O,T}) isa String
         Q15 = fixed(16, 15)
         @test repr(Q15(0.5)) == "Fx{16, 15, RoundDown, Saturate, Int16}(0.5)"
         @test repr([Q15(0.5), Q15(-0.25)]) == "Fx{16, 15, RoundDown, Saturate, Int16}[0.5, -0.25]"
@@ -238,19 +242,135 @@ const RNG = Xoshiro(20261101)
         @test signbit(Q15(-0.5)) && !signbit(Q15(0.5))
     end
 
+    @testset "division" begin
+        # The exact quotient rounded once; division by zero as ±Inf, and 0/0 as NaN, convert
+        refdiv(Y, p, q) = iszero(q) ? (iszero(p) ? big(0) : big(rawvalue(Y(sign(p) * Inf)))) : refraw(Y, p // q)
+
+        for R in ROUNDINGS, O in OVERFLOWS
+            A = fixed(6, 3; rounding=R, overflow=O)
+            B = fixed(5, 2; rounding=R, overflow=O)
+            pairs = vec(collect(Iterators.product(allvalues(A), allvalues(B))))
+            for Y in (A, fixed(8, 6; rounding=R, overflow=O), fixed(4, 0; rounding=R, overflow=O))
+                @test isempty(
+                    failures(((a, b),) -> rawvalue(divide(Y, a, b)) == refdiv(Y, exact(a), exact(b)), pairs)
+                )
+            end
+            @test all(((a, b),) -> a / b === divide(A, a, b), pairs)
+        end
+
+        for R in (RoundDown, RoundNearest, RoundNearestTiesUp), O in OVERFLOWS
+            f(W, F) = fixed(W, F; rounding=R, overflow=O)
+            formats = (
+                (f(16, 15), f(16, 15), f(16, 15)),
+                (f(16, 15), f(16, 4), f(16, 10)),
+                (f(32, 30), f(32, 30), f(16, 15)),
+                (f(32, 8), f(16, 15), f(32, 16)),
+                (f(64, 32), f(32, 16), f(64, 40)),  # needs 128-bit integers
+            )
+            for (A, B, Y) in formats
+                pairs = zip(samples(RNG, A, 300), samples(RNG, B, 300))
+                @test isempty(
+                    failures(((a, b),) -> rawvalue(divide(Y, a, b)) == refdiv(Y, exact(a), exact(b)), pairs)
+                )
+            end
+        end
+
+        ns = (-1000, -3, -1, 0, 1, 2, 3, 7, typemax(Int64), typemin(Int64), big(10)^25, true, false, UInt8(255))
+        for (W, F) in ((8, 3), (16, 15), (16, 0), (32, 8)), R in (RoundDown, RoundNearest), O in OVERFLOWS
+            X = fixed(W, F; rounding=R, overflow=O)
+            xs = samples(RNG, X, 30)
+            for n in ns
+                @test isempty(failures(x -> rawvalue(x / n) == refdiv(X, exact(x), big(n) // 1), xs))
+                # Large integer numerators are clamped, which changes only quotients that overflow with Wrap
+                if O !== Wrap || -3 <= n <= 3
+                    @test isempty(failures(x -> rawvalue(n / x) == refdiv(X, big(n) // 1, exact(x)), xs))
+                end
+            end
+            @test inv(xs[5]) === 1 / xs[5]
+        end
+
+        Y = fixed(16, 13; rounding=RoundNearest)
+        @test rawvalue(divide(Y, 1, 3)) == refraw(Y, 1 // 3)
+        @test divide(Y, 5, 0) === typemax(Y)
+        @test divide(Y, -5, 0) === typemin(Y)
+        @test iszero(divide(Y, 0, 0))
+        for O in OVERFLOWS
+            X = fixed(16, 15; overflow=O)
+            @test X(0.5) / zero(X) === (O === Wrap ? zero(X) : typemax(X))
+            @test X(-0.5) / 0 === (O === Wrap ? zero(X) : typemin(X))
+            @test iszero(zero(X) / zero(X))
+        end
+        @test_throws ErrorException fixed(8, 4)(1) / fixed(8, 4; overflow=Wrap)(1)
+    end
+
+    @testset "complex division rounds once" begin
+        refdiv(Y, p, q) = iszero(q) ? (iszero(p) ? big(0) : big(rawvalue(Y(sign(p) * Inf)))) : refraw(Y, p // q)
+        for R in (RoundDown, RoundNearest), O in OVERFLOWS
+            X = fixed(16, 15; rounding=R, overflow=O)
+            P = fixed(32, 30; rounding=R, overflow=O)
+            m1 = fromraw(X, -32768)
+            cases = [
+                (Complex(m1, m1), Complex(m1, m1))
+                (Complex(X(0.5), X(0.25)), zero(Complex{X}))
+                collect(zip(rand(RNG, Complex{X}, 300), rand(RNG, Complex{X}, 300)))
+            ]
+            for (a, b) in cases
+                c = a / b
+                @test typeof(c) === Complex{X}
+                ar, ai, br, bi = big.(rawvalue.((real(a), imag(a), real(b), imag(b))))
+                # a·conj(b) and abs2(b) are exact sums of products in the 32-bit product format
+                re = refoverflow(P, ar * br + ai * bi)
+                im_ = refoverflow(P, ai * br - ar * bi)
+                den = refoverflow(P, br^2 + bi^2)
+                @test rawvalue(real(c)) == refdiv(X, re // 1, den // 1)
+                @test rawvalue(imag(c)) == refdiv(X, im_ // 1, den // 1)
+            end
+            a = rand(RNG, Complex{X})
+            x = rand(RNG, X)
+            @test x / a === Complex(x, zero(x)) / a
+            @test a / x === Complex(real(a) / x, imag(a) / x)
+            @test a / 2 === Complex(real(a) / 2, imag(a) / 2)
+        end
+    end
+
+    @testset "sqrt" begin
+        # floor(sqrt(N)) for N = x.i·2^F, rounded up when the root is at least s + 1/2, that is when 4N > (2s + 1)²
+        function refsqrt(X, x)
+            rawvalue(x) < 0 && return big(0)
+            N = big(rawvalue(x)) << fractionlength(X)
+            s = isqrt(N)
+            R = roundingmode(X)
+            up = R === RoundDown || R === RoundToZero ? false : R === RoundUp ? s^2 != N : 4N > (2s + 1)^2
+            return refoverflow(X, s + up)
+        end
+        for (W, F) in ((6, 2), (8, 0), (8, 4), (8, 7), (8, 8)), R in ROUNDINGS, O in OVERFLOWS
+            X = fixed(W, F; rounding=R, overflow=O)
+            @test isempty(failures(x -> rawvalue(sqrt(x)) == refsqrt(X, x), allvalues(X)))
+        end
+        for (W, F) in ((16, 15), (16, 4), (32, 30), (32, 0), (64, 32), (64, 63)), R in ROUNDINGS
+            X = fixed(W, F; rounding=R)
+            @test isempty(failures(x -> rawvalue(sqrt(x)) == refsqrt(X, x), samples(RNG, X, 300)))
+        end
+        @test sqrt(fixed(16, 15)(0.25)) === fixed(16, 15)(0.5)
+        @test iszero(sqrt(fixed(16, 15)(-0.25)))
+        @test abs(Float64(sqrt(fixed(32, 16; rounding=RoundNearest)(2))) - sqrt(2)) <= 2.0^-17
+    end
+
     @testset "no silent floating point" begin
         x = fixed(16, 15)(0.5)
-        for f in (y -> y + 0.5, y -> 0.5 + y, y -> y * 0.5f0, y -> y < 0.1, y -> y == 0.5, y -> max(y, 0.1))
+        for f in (y -> y + 0.5, y -> 0.5 + y, y -> y * 0.5f0, y -> y / 0.5, y -> y < 0.1, y -> y == 0.5, y -> max(y, 0.1))
             @test_throws ArgumentError f(x)
         end
-        for f in (sqrt, exp, log, sin, cos, inv, y -> y / y, y -> y / 2, y -> 2 / y, y -> y^3)
+        for f in (exp, log, sin, cos, atan, y -> y^3)
             @test_throws ArgumentError f(x)
         end
-        z = Complex(x, x)
-        @test_throws ArgumentError abs(z)
-        @test_throws ArgumentError angle(z)
-        @test_throws ArgumentError z / z
         @test_throws ArgumentError cis(x)
+        # Base's complex functions would convert to float first
+        z = Complex(x, x)
+        for f in (sqrt, exp, log, tan, atan, asin, exp2, log10, abs, angle, w -> w^3)
+            @test_throws ArgumentError f(z)
+        end
+        @test z^2 === z * z
     end
 
     @testset "arrays" begin
